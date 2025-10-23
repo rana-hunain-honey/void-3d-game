@@ -16,29 +16,38 @@ Red Void is a 3D first-person survival shooter game built with Python and the Ur
 - **Alternative**: Three.js (HTML version)
 
 ## Game Features
-- First-person shooter mechanics
+- **First-Person Shooter** with PUBG-style free look
+- **360° Mouse Look** - Always-on camera control for full situational awareness
 - Object pooling for performance optimization
 - Adaptive spawn system based on FPS
-- Neon grid aesthetic
-- Settings persistence (shadows, particles, sound)
-- Mouse-based aiming with pointer lock
-- Free-look mode
+- Neon grid aesthetic with atmospheric fog
+- Enhanced lighting with dynamic shadows
+- Settings persistence (shadows, particles, sound, spawn rate)
+- Glowing enemies for better visibility
 
 ## Controls
-- WASD / Arrow keys: Move
-- Mouse: Aim
-- Left Click / Space: Shoot
-- F: Toggle free look
-- P: Pre-warm object pools
-- T: Trim object pools
+- **WASD / Arrow keys**: Move in any direction
+- **Mouse**: Look around 360° (first-person free look - always active)
+- **Left Click**: Shoot fireballs at enemies
+- **ESC**: Exit pointer lock
+- P: Pre-warm object pools (performance)
+- T: Trim object pools (free memory)
 
 ## Recent Changes
+- **Transformed to First-Person Shooter** with PUBG-style controls (October 23, 2025)
+  - Switched from third-person to true first-person camera view
+  - Implemented always-on 360° free look with mouse
+  - Camera positioned at player eye level (1.7 units) for immersive gameplay
+  - Enhanced lighting system with player-attached point light
+  - Increased enemy visibility with stronger emissive glow
+  - Improved FOV to 90 degrees for better peripheral vision
 - Initial project setup on Replit (October 23, 2025)
 - Installed Python 3.11 and Ursina dependencies
 - Created .gitignore for Python projects
 - Created HTTP server (`server.py`) to serve the HTML/Three.js version
 - Added landing page (`3d app/index.html`) with game information
 - Configured workflow to run web server on port 5000
+- Fixed JavaScript initialization bug (settings variable)
 - Fixed JavaScript initialization bug in `red_void.html` (moved settings declaration before init())
 - Converted line endings from Windows (CRLF) to Unix (LF) format
 - Configured deployment for autoscale hosting
