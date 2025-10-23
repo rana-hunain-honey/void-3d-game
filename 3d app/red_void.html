@@ -86,6 +86,21 @@ freeLookIndicator.style.borderRadius = '6px';
 freeLookIndicator.innerText = 'Free Look: OFF (F)';
 document.body.appendChild(freeLookIndicator);
 
+// Settings and persistence - moved here before init()
+const SETTINGS_KEY = 'red_void_settings_v1';
+let settings = {
+  shadows: true,
+  particles: true,
+  sound: true,
+  spawnMultiplier: 1.0,
+  enemySpeedMultiplier: 1.0,
+};
+function loadSettings(){
+  try { const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); if (s) Object.assign(settings, s); } catch(e){}
+}
+function saveSettings(){ localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }
+loadSettings();
+
 init();
 animate();
 
@@ -429,21 +444,6 @@ function spawnParticles(pos, color=0xff4444){
     anim();
   }
 }
-
-// Settings and persistence
-const SETTINGS_KEY = 'red_void_settings_v1';
-let settings = {
-  shadows: true,
-  particles: true,
-  sound: true,
-  spawnMultiplier: 1.0,
-  enemySpeedMultiplier: 1.0,
-};
-function loadSettings(){
-  try { const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); if (s) Object.assign(settings, s); } catch(e){}
-}
-function saveSettings(){ localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }
-loadSettings();
 
 // small settings UI
 function createSettingsUI(){

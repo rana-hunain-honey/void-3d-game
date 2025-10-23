@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Red Void - 3D Survival Shooter</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #000;
+            color: #fff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            text-align: center;
+            max-width: 600px;
+        }
+        h1 {
+            color: #ff3333;
+            font-size: 3em;
+            margin-bottom: 0.2em;
+            text-shadow: 0 0 10px #ff3333;
+        }
+        .subtitle {
+            color: #aaa;
+            font-size: 1.2em;
+            margin-bottom: 2em;
+        }
+        .play-button {
+            display: inline-block;
+            padding: 15px 40px;
+            background: linear-gradient(135deg, #ff3333, #cc0000);
+            color: #fff;
+            text-decoration: none;
+            font-size: 1.5em;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(255, 51, 51, 0.3);
+            transition: all 0.3s ease;
+            margin: 20px 0;
+        }
+        .play-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 51, 51, 0.5);
+        }
+        .info {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 30px;
+            text-align: left;
+        }
+        .info h3 {
+            color: #ff3333;
+            margin-top: 0;
+        }
+        .info ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+        .info li {
+            margin: 8px 0;
+            padding-left: 20px;
+            position: relative;
+        }
+        .info li:before {
+            content: "▸";
+            position: absolute;
+            left: 0;
+            color: #ff3333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>RED VOID</h1>
+        <div class="subtitle">3D Survival Shooter</div>
+        
+        <a href="red_void.html" class="play-button">PLAY GAME</a>
+        
+        <div class="info">
+            <h3>About</h3>
+            <p>Navigate a neon grid environment and survive against waves of enemies. Use your shooting skills and quick reflexes to rack up kills!</p>
+            
+            <h3>Controls</h3>
+            <ul>
+                <li>WASD / Arrow Keys: Move</li>
+                <li>Mouse: Aim (pointer lock)</li>
+                <li>Left Click: Shoot</li>
+                <li>Right Click: Hold for free look</li>
+                <li>F: Toggle free look</li>
+                <li>ESC: Exit pointer lock</li>
+            </ul>
+            
+            <h3>Features</h3>
+            <ul>
+                <li>Object pooling for smooth performance</li>
+                <li>Adaptive spawn system</li>
+                <li>Configurable settings (shadows, particles, spawn rate)</li>
+                <li>Neon aesthetic with atmospheric fog</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
