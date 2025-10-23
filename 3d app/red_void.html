@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Red Void — Minimal 3D Survival</title>
+<style>
+  html,body { height:100%; margin:0; background:black; overflow:hidden; font-family: Arial, sans-serif; }
+  #ui {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    color: #fff; text-align:center; pointer-events:none;
+  }
+  #score { font-size: 20px; letter-spacing: 1px; }
+  #message {
+    position: absolute; top: 40%; left: 50%; transform: translate(-50%,-50%);
+    color: #ff3333; font-size: 28px; display:none; text-align:center; 
+  }
+  #controls {
+    position: absolute; bottom: 12px; left: 12px; color:#aaa; font-size:12px;
+    background: rgba(0,0,0,0.4); padding:8px; border-radius:6px;
+  }
+  canvas { display:block; }
+  #fps { position: absolute; top:12px; right:12px; color:#aaa; font-size:12px; }
+</style>
+</head>
+<body>
+<div id="ui"><div id="score">Kills: 0</div></div>
+<div id="message">
+  <div style="font-weight:700">You have been consumed by the void.</div>
+  <div id="final">Enemies killed: 0</div>
+  <div style="margin-top:12px; font-size:14px; color:#ccc; cursor:pointer;" id="restart">Click to Restart</div>
+</div>
+<div id="controls">
+  WASD / Arrow Keys: move &nbsp; • &nbsp; Mouse: aim &nbsp; • &nbsp; Left Click: shoot &nbsp; • &nbsp; ESC: exit pointer lock
+</div>
+<div id="fps"></div>
+
+<!-- three.js from CDN -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+
+<script>
+/* === Configuration (tweak if needed) === */
+const SPAWN_SEC = 3.0;       // desired spawn interval (seconds) — slower spawn
+const MAX_ENEMIES = 800;     // hard cap to avoid browser freeze
+// velocities are now in units-per-second. To preserve previous feel these were scaled up.
+const ENEMY_SPEED = 3.2;     // base enemy speed (units per second) — slowed down
+const FIREBALL_SPEED = 252;  // speed of player's projectiles (units per second)
+const PLAYER_SPEED = 4.8;    // movement speed (units per second)
+const PLAYER_RADIUS = 0.35; // smaller player radius to match ship
+const ENEMY_RADIUS = 0.45;
+const WORLD_RADIUS = 30;     // how far enemies spawn away
+/* ====================================== */
+
+/* Basic three.js setup */
+let scene, camera, renderer, clock;
+let playerMesh;
+let enemies = [];
+let fireballs = [];
+// simple object pools to reduce GC and allocations
+let enemyPool = [];
+let fireballPool = [];
+const POOL_MAX = 300; // max pooled objects
+let score = 0;
+let running = true;
+let spawnTimer = null;
+let lastSpawn = performance.now();
+let keys = {};
+let pointerLocked = false;
+let aimVector = new THREE.Vector3(0,0,-1);
+// free look state: toggle with 'F' or hold right mouse button
+let freeLook = false;
+let rightMouseLook = false;
+let playerYaw = 0;
+let fpsMeter = document.getElementById('fps');
+
+// free look indicator
+const freeLookIndicator = document.createElement('div');
+freeLookIndicator.style.position = 'absolute';
+freeLookIndicator.style.left = '12px';
+freeLookIndicator.style.bottom = '12px';
+freeLookIndicator.style.color = '#faa';
+freeLookIndicator.style.fontSize = '12px';
+freeLookIndicator.style.padding = '6px 8px';
+freeLookIndicator.style.background = 'rgba(0,0,0,0.4)';
+freeLookIndicator.style.borderRadius = '6px';
+freeLookIndicator.innerText = 'Free Look: OFF (F)';
+document.body.appendChild(freeLookIndicator);
+
+init();
+animate();
+
+function init(){
+  // scene + renderer
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x000000);
+  // fog so distant objects fade to black
+  scene.fog = new THREE.FogExp2(0x000000, 0.02);
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // camera (third-person behind player)
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 3, 8);
+
+  // lights: dynamic red flash via emissive and tiny ambient
+  const ambient = new THREE.AmbientLight(0x080808);
+  scene.add(ambient);
+
+  // directional light + rim light for basic 3D shading
+  const dirLight = new THREE.DirectionalLight(0xffcccc, 0.18);
+  dirLight.position.set(5, 10, 5);
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.set(1024, 1024);
+  scene.add(dirLight);
+
+  const rim = new THREE.DirectionalLight(0x6666ff, 0.06);
+  rim.position.set(-6, 4, -6);
+  scene.add(rim);
+
+  // player: small 3D ship (cone nose + cylinder body)
+  const bodyGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.5, 12);
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xddddff, metalness: 0.2, roughness: 0.3, emissive: 0x111122 });
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  body.rotation.z = Math.PI/2;
+
+  const noseGeo = new THREE.ConeGeometry(0.14, 0.3, 12);
+  const noseMat = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.4, roughness: 0.2 });
+  const nose = new THREE.Mesh(noseGeo, noseMat);
+  nose.position.x = 0.4;
+  nose.rotation.z = Math.PI/2;
+
+  playerMesh = new THREE.Group();
+  playerMesh.add(body);
+  playerMesh.add(nose);
+  playerMesh.position.set(0, 0, 0);
+  playerMesh.castShadow = true;
+  playerMesh.receiveShadow = true;
+  scene.add(playerMesh);
+
+  // crosshair UI
+  const ch = document.createElement('div');
+  ch.id = 'crosshair';
+  ch.style.position = 'absolute';
+  ch.style.left = '50%';
+  ch.style.top = '50%';
+  ch.style.width = '10px';
+  ch.style.height = '10px';
+  ch.style.marginLeft = '-5px';
+  ch.style.marginTop = '-5px';
+  ch.style.border = '2px solid rgba(255,60,60,0.95)';
+  ch.style.borderRadius = '2px';
+  ch.style.pointerEvents = 'none';
+  document.body.appendChild(ch);
+
+  // ground: keep but hide large ground so scene looks empty beyond the local grid
+  const groundGeo = new THREE.PlaneGeometry(200, 200);
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x000000, metalness: 0.05, roughness: 1.0 });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI/2;
+  ground.position.y = -1.21;
+  ground.receiveShadow = true;
+  ground.visible = false; // hide the broad ground to create blackness beyond grid
+  scene.add(ground);
+
+  // neon red square grid overlay using a canvas texture (additive blending for glow)
+  // create a local neon grid that follows the player so only nearby area is visible
+  let gridPlane = null;
+  const GRID_WORLD_SIZE = 40; // world units of visible grid (square)
+  (function createNeonGrid(){
+    const size = 1024;
+    const divisions = 20; // number of squares per side within the local grid
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0,0,size,size);
+
+    // draw glow by drawing multiple strokes with increasing thinness/alpha
+    const step = size / divisions;
+    for (let i = 0; i <= divisions; i++){
+      const x = Math.round(i*step) + 0.5;
+      const y = Math.round(i*step) + 0.5;
+      // vertical glow
+      for (let g = 6; g >= 1; g--) {
+        ctx.beginPath();
+        ctx.strokeStyle = `rgba(255,40,40,${0.012 * g})`;
+        ctx.lineWidth = 2 + g*1.2;
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, size);
+        ctx.stroke();
+      }
+      // horizontal glow
+      for (let g = 6; g >= 1; g--) {
+        ctx.beginPath();
+        ctx.strokeStyle = `rgba(255,40,40,${0.012 * g})`;
+        ctx.lineWidth = 2 + g*1.2;
+        ctx.moveTo(0, y);
+        ctx.lineTo(size, y);
+        ctx.stroke();
+      }
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(1,1);
+
+  const gridMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  gridPlane = new THREE.Mesh(new THREE.PlaneGeometry(GRID_WORLD_SIZE, GRID_WORLD_SIZE), gridMat);
+  gridPlane.rotation.x = -Math.PI/2;
+  gridPlane.position.y = -1.19; // slightly above ground to avoid z-fighting
+  gridPlane.renderOrder = 1;
+  scene.add(gridPlane);
+  window._redVoidGridPlane = gridPlane; // expose for debugging
+  })();
+
+  // minimal floor reference (invisible) - not needed but helps orientation
+  // create a subtle red point light that flashes on spawn/kill
+  window.flashLight = new THREE.PointLight(0xff0000, 0, 30);
+  scene.add(window.flashLight);
+
+  // tiny particle group for brief kill flash
+  // handle window resize and input
+  window.addEventListener('resize', onResize);
+  window.addEventListener('keydown', e => keys[e.code] = true);
+  window.addEventListener('keyup', e => keys[e.code] = false);
+
+  // mouse controls: pointer lock to aim
+  renderer.domElement.addEventListener('click', () => {
+    if (!pointerLocked) renderer.domElement.requestPointerLock();
+    // also allow shooting via clicks when pointer locked
+  });
+
+  document.addEventListener('pointerlockchange', () => {
+    pointerLocked = !!document.pointerLockElement;
+  });
+
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mousedown', onMouseDown);
+  document.addEventListener('mouseup', (e) => { if (e.button === 2) rightMouseLook = false; });
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // toggle free look with F (separate from keys map)
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyF') { toggleFreeLook(!freeLook); }
+  });
+
+  // drag-to-look when pointer isn't locked
+  let dragging = false, lastX=0, lastY=0;
+  document.addEventListener('mousedown', (e)=>{
+    if (!pointerLocked && e.button === 0) { dragging = true; lastX = e.clientX; lastY = e.clientY; }
+  });
+  document.addEventListener('mouseup', (e)=>{ if (e.button === 0) dragging = false; });
+  document.addEventListener('mouseleave', ()=> { dragging = false; });
+
+  // help overlay on first run
+  const HELP_KEY = 'red_void_seen_help_v1';
+  if (!localStorage.getItem(HELP_KEY)) {
+    const help = document.createElement('div');
+    help.id = 'helpOverlay';
+    help.style.position = 'absolute';
+    help.style.left = '50%';
+    help.style.top = '48%';
+    help.style.transform = 'translate(-50%,-50%)';
+    help.style.background = 'rgba(0,0,0,0.8)';
+    help.style.color = '#fff';
+    help.style.padding = '14px 18px';
+    help.style.borderRadius = '8px';
+    help.style.fontSize = '13px';
+    help.style.textAlign = 'left';
+    help.innerHTML = '<b>Controls</b><br>WASD / Arrows: move<br>Mouse: aim (pointer lock) or drag to look<br>Left click: shoot<br>Right click: hold to free look<br>F: toggle free look<br><div style="margin-top:8px; text-align:right;"><button id="helpOk">Got it</button></div>';
+    document.body.appendChild(help);
+    document.getElementById('helpOk').addEventListener('click', ()=>{ localStorage.setItem(HELP_KEY,'1'); help.remove(); });
+  }
+
+  // UI restart button
+  document.getElementById('restart').addEventListener('click', restartGame);
+
+  // basic touch controls (fire button)
+  const fireBtn = document.createElement('div');
+  fireBtn.id = 'fireBtn';
+  fireBtn.style.position = 'absolute';
+  fireBtn.style.right = '16px';
+  fireBtn.style.bottom = '16px';
+  fireBtn.style.width = '84px';
+  fireBtn.style.height = '84px';
+  fireBtn.style.borderRadius = '42px';
+  fireBtn.style.background = 'rgba(255,40,40,0.14)';
+  fireBtn.style.border = '2px solid rgba(255,40,40,0.24)';
+  fireBtn.style.touchAction = 'none';
+  fireBtn.style.zIndex = 9999;
+  fireBtn.style.display = 'none';
+  document.body.appendChild(fireBtn);
+  fireBtn.addEventListener('pointerdown', (e)=>{ e.preventDefault(); shootFireball(); });
+
+  // show touch button on touch devices
+  if ('ontouchstart' in window) {
+    fireBtn.style.display = 'block';
+  }
+
+  clock = new THREE.Clock();
+
+  // start spawning enemies at intense rate
+  startSpawning();
+}
+
+/* ==== Input handlers ==== */
+function onMouseMove(e){
+  if (!pointerLocked) return;
+  const movementX = e.movementX || 0;
+  const movementY = e.movementY || 0;
+  const sensitivity = 0.0022;
+  const lookActive = freeLook || rightMouseLook;
+  if (lookActive) {
+    // rotate camera independently
+    camera.rotation.y -= movementX * sensitivity;
+    camera.rotation.x -= movementY * sensitivity;
+    camera.rotation.x = Math.max(-1.2, Math.min(1.2, camera.rotation.x));
+    aimVector.set(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+  } else {
+    // rotate both player facing and camera
+    playerYaw -= movementX * sensitivity;
+    camera.rotation.y = playerYaw;
+    camera.rotation.x -= movementY * sensitivity;
+    camera.rotation.x = Math.max(-1.2, Math.min(1.2, camera.rotation.x));
+    aimVector.set(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+  }
+}
+
+function onMouseDown(e){
+  if (!running) return;
+  if (e.button === 0) shootFireball();
+  if (e.button === 2) rightMouseLook = true;
+}
+
+/* ==== Spawning ==== */
+function startSpawning(){
+  // clear existing timer to avoid duplicates
+  if (spawnTimer) clearInterval(spawnTimer);
+  const msBase = Math.max(200, Math.floor(SPAWN_SEC * 1000));
+  const ms = Math.max(200, Math.floor(msBase / (settings.spawnMultiplier || 1)));
+  spawnTimer = setInterval(() => {
+    if (!running) return;
+    if (enemies.length >= MAX_ENEMIES) return;
+    spawnEnemy();
+  }, ms);
+}
+
+function restartSpawningWithSettings(){
+  if (spawnTimer) clearInterval(spawnTimer);
+  startSpawning();
+}
+
+function spawnEnemy(){
+  // spawn on a random point on a sphere at WORLD_RADIUS
+  const dir = new THREE.Vector3(
+    (Math.random()*2-1),
+    (Math.random()*2-1) * 0.6, // favor horizontal plane a bit
+    (Math.random()*2-1)
+  ).normalize();
+
+  const pos = dir.clone().multiplyScalar(WORLD_RADIUS + Math.random()*4);
+  // create a simple 3D enemy box instead of a flat banner
+  const boxW = 0.9 + Math.random()*0.6;
+  const boxH = 1.2 + Math.random()*0.8;
+  const boxD = 0.4 + Math.random()*0.4;
+  // try to reuse from pool
+  let meshObj = null;
+  if (enemyPool.length) {
+    meshObj = enemyPool.pop();
+    meshObj.mesh.scale.set(1,1,1);
+    meshObj.mesh.visible = true;
+  } else {
+    const geo = new THREE.BoxGeometry(boxW, boxH, boxD);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xff2222, metalness: 0.2, roughness: 0.6, emissive: 0x220000 });
+    const m = new THREE.Mesh(geo, mat);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    meshObj = { mesh: m, box: new THREE.Box3() };
+  }
+  // configure size for pooled or new mesh
+  meshObj.mesh.geometry.dispose && meshObj.mesh.geometry.parameters === undefined && meshObj.mesh.geometry.dispose();
+  meshObj.mesh.scale.set(1,1,1);
+  meshObj.mesh.position.copy(pos);
+  meshObj.mesh.lookAt(0,0,0);
+  meshObj.mesh.rotation.x = 0;
+  scene.add(meshObj.mesh);
+
+    // track velocity toward player with some randomness
+    const velocity = dir.clone().multiplyScalar(-1).multiplyScalar(ENEMY_SPEED * (settings.enemySpeedMultiplier || 1));
+
+  enemies.push({ mesh: meshObj.mesh, velocity, spawnTime: performance.now(), box: meshObj.box });
+
+  // small flash on spawn
+  flash(0.6, 30);
+}
+
+// particle pool for small explosion effects
+let particlePool = [];
+function spawnParticles(pos, color=0xff4444){
+  const count = 8;
+  for (let i=0;i<count;i++){
+    let p = null;
+    if (particlePool.length) p = particlePool.pop();
+    else {
+      const g = new THREE.SphereGeometry(0.03,6,6);
+      const m = new THREE.MeshBasicMaterial({ color });
+      p = new THREE.Mesh(g,m);
+    }
+    p.position.copy(pos);
+    scene.add(p);
+    const vel = new THREE.Vector3((Math.random()*2-1), Math.random()*0.6, (Math.random()*2-1)).multiplyScalar(1.8);
+    const born = performance.now();
+    // animate manually
+    const dur = 550;
+    const anim = () => {
+      const now = performance.now();
+      const t = (now - born) / dur;
+      if (t < 1) {
+        p.position.addScaledVector(vel, 0.016);
+        requestAnimationFrame(anim);
+      } else {
+        scene.remove(p);
+        if (particlePool.length < 200) particlePool.push(p);
+        else { if (p.geometry) p.geometry.dispose(); if (p.material) p.material.dispose(); }
+      }
+    };
+    anim();
+  }
+}
+
+// Settings and persistence
+const SETTINGS_KEY = 'red_void_settings_v1';
+let settings = {
+  shadows: true,
+  particles: true,
+  sound: true,
+  spawnMultiplier: 1.0,
+  enemySpeedMultiplier: 1.0,
+};
+function loadSettings(){
+  try { const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); if (s) Object.assign(settings, s); } catch(e){}
+}
+function saveSettings(){ localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }
+loadSettings();
+
+// small settings UI
+function createSettingsUI(){
+  const panel = document.createElement('div');
+  panel.style.position='absolute'; panel.style.right='12px'; panel.style.top='12px'; panel.style.background='rgba(0,0,0,0.5)'; panel.style.color='#fff'; panel.style.padding='8px'; panel.style.borderRadius='6px'; panel.style.fontSize='12px';
+  panel.innerHTML = `
+    <div style="margin-bottom:6px">Settings</div>
+    <label><input id="s_shadows" type="checkbox"> Shadows</label><br>
+    <label><input id="s_particles" type="checkbox"> Particles</label><br>
+    <label><input id="s_sound" type="checkbox"> Sound</label><br>
+    <label style="display:block;margin-top:6px">Spawn x <input id="s_spawn" type="range" min="0.2" max="2" step="0.1"></label>
+    <label style="display:block">Enemy x <input id="s_speed" type="range" min="0.2" max="2" step="0.1"></label>
+    <div style="margin-top:8px; display:flex; gap:6px;">
+      <button id="prewarmPools" style="flex:1;">Pre-warm Pools</button>
+      <button id="trimPools" style="flex:1;">Trim Pools</button>
+    </div>
+  `;
+  document.body.appendChild(panel);
+  document.getElementById('s_shadows').checked = settings.shadows;
+  document.getElementById('s_particles').checked = settings.particles;
+  document.getElementById('s_sound').checked = settings.sound;
+  document.getElementById('s_spawn').value = settings.spawnMultiplier;
+  document.getElementById('s_speed').value = settings.enemySpeedMultiplier;
+  document.getElementById('s_shadows').addEventListener('change', (e)=>{ settings.shadows = e.target.checked; renderer.shadowMap.enabled = settings.shadows; saveSettings(); });
+  document.getElementById('s_particles').addEventListener('change', (e)=>{ settings.particles = e.target.checked; saveSettings(); });
+  document.getElementById('s_sound').addEventListener('change', (e)=>{ settings.sound = e.target.checked; saveSettings(); });
+  document.getElementById('s_spawn').addEventListener('input', (e)=>{ settings.spawnMultiplier = parseFloat(e.target.value); saveSettings(); restartSpawningWithSettings(); });
+  document.getElementById('s_speed').addEventListener('input', (e)=>{ settings.enemySpeedMultiplier = parseFloat(e.target.value); saveSettings(); });
+  document.getElementById('prewarmPools').addEventListener('click', ()=>{ prewarmPools(); });
+  document.getElementById('trimPools').addEventListener('click', ()=>{ trimPools(); });
+}
+createSettingsUI();
+
+// prefill pools to reduce allocation spikes
+function prefillPools(){
+  for (let i=0;i<20;i++){
+    // enemy
+    if (enemyPool.length < POOL_MAX) {
+      const g = new THREE.BoxGeometry(0.8,1.2,0.4);
+      const m = new THREE.MeshStandardMaterial({ color: 0xff2222 });
+      const mesh = new THREE.Mesh(g,m);
+      mesh.castShadow = true; mesh.receiveShadow = true; mesh.visible = false;
+      enemyPool.push({ mesh, box: new THREE.Box3() });
+    }
+    // fireball
+    if (fireballPool.length < 40) {
+      const g2 = new THREE.SphereGeometry(0.12,6,6);
+      const m2 = new THREE.MeshBasicMaterial({ color: 0xff4444 });
+      const mesh2 = new THREE.Mesh(g2,m2);
+      mesh2.visible = false; fireballPool.push({ mesh: mesh2 });
+    }
+    // particles
+    if (particlePool.length < 40) {
+      const pg = new THREE.SphereGeometry(0.03,6,6);
+      const pm = new THREE.MeshBasicMaterial({ color: 0xff4444 });
+      const pmsh = new THREE.Mesh(pg, pm);
+      pmsh.visible = false; particlePool.push(pmsh);
+    }
+  }
+}
+prefillPools();
+
+// simple WebAudio blip for shoot/kill
+let audioCtx = null;
+function playBlip(freq=440, dur=0.08, vol=0.06){
+  if (!settings.sound) return; // honor sound setting
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = 'sawtooth';
+  o.frequency.value = freq;
+  g.gain.value = vol;
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start();
+  o.stop(audioCtx.currentTime + dur);
+}
+
+// prewarm pools more aggressively on demand
+function prewarmPools(){
+  // create additional items up to a safe number but not exceeding POOL_MAX
+  const targetEnemies = Math.min(POOL_MAX, 120);
+  const targetFireballs = Math.min(POOL_MAX, 80);
+  const targetParticles = Math.min(200, 160);
+  while (enemyPool.length < targetEnemies) {
+    const g = new THREE.BoxGeometry(0.8,1.2,0.4);
+    const m = new THREE.MeshStandardMaterial({ color: 0xff2222 });
+    const mesh = new THREE.Mesh(g,m); mesh.visible = false; mesh.castShadow = true; mesh.receiveShadow = true;
+    enemyPool.push({ mesh, box: new THREE.Box3() });
+  }
+  while (fireballPool.length < targetFireballs) {
+    const g2 = new THREE.SphereGeometry(0.12,6,6);
+    const m2 = new THREE.MeshBasicMaterial({ color: 0xff4444 });
+    const mesh2 = new THREE.Mesh(g2,m2); mesh2.visible = false;
+    fireballPool.push({ mesh: mesh2 });
+  }
+  while (particlePool.length < targetParticles) {
+    const pg = new THREE.SphereGeometry(0.03,6,6);
+    const pm = new THREE.MeshBasicMaterial({ color: 0xff4444 });
+    const pmsh = new THREE.Mesh(pg, pm); pmsh.visible = false; particlePool.push(pmsh);
+  }
+  // small visual cue
+  flash(0.6, 10);
+}
+
+// trim pools to free GPU memory when user requests it
+function trimPools(){
+  // leave a small reserve, but free extra
+  const reserveEnemies = 40;
+  while (enemyPool.length > reserveEnemies) {
+    const e = enemyPool.pop();
+    if (e.mesh.geometry) e.mesh.geometry.dispose();
+    if (e.mesh.material) e.mesh.material.dispose();
+  }
+  const reserveFire = 20;
+  while (fireballPool.length > reserveFire) {
+    const f = fireballPool.pop();
+    if (f.mesh.geometry) f.mesh.geometry.dispose();
+    if (f.mesh.material) f.mesh.material.dispose();
+  }
+  const reserveParticles = 40;
+  while (particlePool.length > reserveParticles) {
+    const p = particlePool.pop();
+    if (p.geometry) p.geometry.dispose();
+    if (p.material) p.material.dispose();
+  }
+  // hint garbage collection by toggling a tiny flash
+  flash(0.3, 8);
+}
+
+/* ==== Shooting ==== */
+function shootFireball(){
+  // small red sphere that moves in aimVector direction from player forward
+  // reuse fireball from pool when possible
+  let fb = null;
+  if (fireballPool.length) {
+    fb = fireballPool.pop();
+    fb.mesh.visible = true;
+  } else {
+    const geo = new THREE.SphereGeometry(0.18, 10, 10);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xff6666 });
+    const m = new THREE.Mesh(geo, mat);
+    m.castShadow = true;
+    fb = { mesh: m };
+  }
+  const start = playerMesh.position.clone().add(aimVector.clone().multiplyScalar(PLAYER_RADIUS + 0.6));
+  fb.mesh.position.copy(start);
+  scene.add(fb.mesh);
+  const velocity = aimVector.clone().multiplyScalar(FIREBALL_SPEED);
+  fireballs.push({ mesh: fb.mesh, velocity, born: performance.now() });
+
+  // small flash
+  flash(0.35, 15);
+  playBlip(880, 0.06, 0.04);
+}
+
+/* ==== Flash helper (fade quickly) ==== */
+function flash(intensity, distance){
+  window.flashLight.intensity = intensity;
+  window.flashLight.distance = distance;
+  // center the light near camera for dramatic effect
+  window.flashLight.position.copy(camera.position);
+  setTimeout(()=> { window.flashLight.intensity = 0; }, 45);
+}
+
+/* ==== Game loop ==== */
+function animate(){
+  if (!running) {
+    render(); // allow final frame
+    return;
+  }
+
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+
+  // move player via WASD (move relative to camera yaw)
+  handlePlayerMovement(dt);
+
+  // update camera: third-person slightly behind player
+  updateCamera();
+
+  // ensure local grid follows the player's x/z position so only area under player is visible
+  if (window._redVoidGridPlane) {
+    const gp = window._redVoidGridPlane;
+    gp.position.x = playerMesh.position.x;
+    gp.position.z = playerMesh.position.z;
+  }
+
+  // update fireballs
+  for (let i = fireballs.length-1; i >= 0; i--){
+    const f = fireballs[i];
+  f.mesh.position.addScaledVector(f.velocity, dt);
+    // remove old projectiles
+    if (performance.now() - f.born > 4000) {
+      scene.remove(f.mesh);
+      // return to pool
+      if (fireballPool.length < POOL_MAX) {
+        fireballPool.push({ mesh: f.mesh });
+        f.mesh.visible = false;
+      } else {
+        // fully dispose geometry/material to free GPU
+        if (f.mesh.geometry) f.mesh.geometry.dispose();
+        if (f.mesh.material) f.mesh.material.dispose();
+      }
+      fireballs.splice(i,1);
+    }
+  }
+
+  // update enemies
+  for (let i = enemies.length-1; i >= 0; i--){
+    const e = enemies[i];
+  e.mesh.position.addScaledVector(e.velocity, dt);
+
+    // rotate slowly for effect
+    e.mesh.rotateY(0.01);
+
+    // update bounding box for box-based collision
+    e.box.setFromObject(e.mesh);
+    // check collision with player (sphere vs box)
+    const playerSphere = new THREE.Sphere(playerMesh.position.clone(), PLAYER_RADIUS + ENEMY_RADIUS);
+    if (e.box.intersectsSphere(playerSphere)) {
+      endGame();
+      return;
+    }
+
+    // check collisions with fireballs
+    let killed = false;
+    for (let j = fireballs.length-1; j >= 0; j--){
+      const f = fireballs[j];
+  const d = f.mesh.position.distanceTo(e.mesh.position);
+  if (d < 1.2) { // increased hit threshold to make kills easier
+        // kill enemy
+        // remove both
+          scene.remove(e.mesh);
+          scene.remove(f.mesh);
+    // visual pop: scale up briefly then return to pool
+          const origScale = e.mesh.scale.clone();
+          const targetScale = origScale.clone().multiplyScalar(1.6);
+          let tStart = performance.now();
+          const popDur = 120;
+          const popAnim = () => {
+            const now = performance.now();
+            const t = Math.min(1, (now - tStart) / popDur);
+            e.mesh.scale.lerpVectors(origScale, targetScale, t);
+            if (t < 1) requestAnimationFrame(popAnim);
+            else {
+              // after pop, return to pool
+              scene.remove(e.mesh);
+              if (enemyPool.length < POOL_MAX) { enemyPool.push({ mesh: e.mesh, box: e.box }); e.mesh.visible = false; }
+              else { if (e.mesh.geometry) e.mesh.geometry.dispose(); if (e.mesh.material) e.mesh.material.dispose(); }
+              // spawn particles and sound
+              spawnParticles(e.mesh.position, 0xff4444);
+              playBlip(540, 0.08, 0.08);
+            }
+          };
+          popAnim();
+          // return fireball to pool immediately
+          if (fireballPool.length < POOL_MAX) { fireballPool.push({ mesh: f.mesh }); f.mesh.visible = false; }
+          else { if (f.mesh.geometry) f.mesh.geometry.dispose(); if (f.mesh.material) f.mesh.material.dispose(); }
+          enemies.splice(i,1);
+          fireballs.splice(j,1);
+        // particle-like brief scale pop
+        // tiny red pulse via flash
+        flash(0.9, 30);
+        score++;
+        updateScore();
+        killed = true;
+        break;
+      }
+    }
+    if (killed) continue;
+
+    // tiny optimization: if enemy passes inside a small sphere behind player, remove
+    if (e.mesh.position.length() < 0.1) {
+      scene.remove(e.mesh);
+      enemies.splice(i,1);
+    }
+  }
+
+  render();
+  updateFPS();
+}
+
+function render(){
+  renderer.render(scene, camera);
+}
+
+function updateScore(){
+  document.getElementById('score').innerText = 'Kills: ' + score;
+}
+
+/* ==== Player movement and camera ==== */
+let velocity = new THREE.Vector3(0,0,0);
+function handlePlayerMovement(dt){
+  // directions relative to camera yaw (ignore camera pitch)
+  // when freeLook is active we keep player's facing in playerYaw
+  const yaw = freeLook ? playerYaw : camera.rotation.y;
+  const forward = new THREE.Vector3(0,0,-1).applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0))).normalize();
+  const right = new THREE.Vector3(1,0,0).applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0))).normalize();
+  let move = new THREE.Vector3();
+  if (keys['KeyW'] || keys['ArrowUp']) move.add(forward);
+  if (keys['KeyS'] || keys['ArrowDown']) move.sub(forward);
+  if (keys['KeyA'] || keys['ArrowLeft']) move.sub(right);
+  if (keys['KeyD'] || keys['ArrowRight']) move.add(right);
+  if (move.length() > 0) move.normalize();
+  // apply to player mesh
+  playerMesh.position.addScaledVector(move, PLAYER_SPEED * dt);
+  // keep player near origin (we want stationary center feel). If player moves too far, clamp.
+  if (playerMesh.position.length() > 2.6) {
+    playerMesh.position.setLength(2.6);
+  }
+}
+
+function updateCamera(){
+  // camera follows behind player offset by camera quaternion (third-person)
+  // position the camera relative to player's world position
+  const offset = new THREE.Vector3(0, 2.2, 6).applyQuaternion(camera.quaternion);
+  camera.position.copy(playerMesh.position).add(offset);
+  camera.lookAt(playerMesh.position);
+}
+
+/* ==== End game / Restart ==== */
+function endGame(){
+  running = false;
+  clearInterval(spawnTimer);
+  // show message
+  document.getElementById('message').style.display = 'block';
+  document.getElementById('final').innerText = 'Enemies killed: ' + score;
+  // silence and small red flash
+  flash(1.2, 40);
+}
+
+function restartGame(){
+  // cleanup scene objects
+  clearInterval(spawnTimer);
+  enemies.forEach(e => {
+    scene.remove(e.mesh);
+    if (enemyPool.length < POOL_MAX) { enemyPool.push({ mesh: e.mesh, box: e.box }); e.mesh.visible = false; }
+    else { if (e.mesh.geometry) e.mesh.geometry.dispose(); if (e.mesh.material) e.mesh.material.dispose(); }
+  });
+  fireballs.forEach(f => {
+    scene.remove(f.mesh);
+    if (fireballPool.length < POOL_MAX) { fireballPool.push({ mesh: f.mesh }); f.mesh.visible = false; }
+    else { if (f.mesh.geometry) f.mesh.geometry.dispose(); if (f.mesh.material) f.mesh.material.dispose(); }
+  });
+  enemies = [];
+  fireballs = [];
+  score = 0;
+  updateScore();
+  document.getElementById('message').style.display = 'none';
+  running = true;
+  // reset player & camera
+  playerMesh.position.set(0,0,0);
+  camera.position.set(0, 3, 8);
+  camera.rotation.set(0,0,0);
+  startSpawning();
+  clock = new THREE.Clock();
+  animate();
+}
+
+/* ==== Utilities ==== */
+function onResize(){
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+let lastFPS = performance.now(), frames = 0;
+// updateFPS: update onscreen FPS and apply a conservative adaptive spawn throttle
+function updateFPS(){
+  frames++;
+  const now = performance.now();
+  // update every 1s to avoid noisy adjustments
+  if (now - lastFPS > 1000) {
+    const fps = Math.round((frames*1000)/(now-lastFPS));
+    // display
+    if (fpsMeter) fpsMeter.innerText = fps + ' FPS • Enemies: ' + enemies.length;
+    // initialize adaptive multiplier container
+    if (!settings._adaptiveMultiplier) settings._adaptiveMultiplier = 1;
+
+    // if FPS too low, gradually increase adaptive multiplier to reduce spawn frequency
+    if (fps < 30) {
+      const newAdj = Math.min(4, settings._adaptiveMultiplier * 1.18);
+      if (newAdj > settings._adaptiveMultiplier + 0.001) {
+        settings._adaptiveMultiplier = newAdj;
+        // lower spawn rate by dividing spawnMultiplier
+        settings.spawnMultiplier = Math.max(0.2, (settings.spawnMultiplier || 1) / settings._adaptiveMultiplier);
+        restartSpawningWithSettings();
+        saveSettings();
+      }
+    } else if (fps > 45 && settings._adaptiveMultiplier > 1.01) {
+      // gradually restore
+      const newAdj = Math.max(1, settings._adaptiveMultiplier / 1.18);
+      if (newAdj < settings._adaptiveMultiplier - 0.001) {
+        settings._adaptiveMultiplier = newAdj;
+        settings.spawnMultiplier = Math.min(2, (settings.spawnMultiplier || 1) / settings._adaptiveMultiplier);
+        restartSpawningWithSettings();
+        saveSettings();
+      }
+    }
+
+    lastFPS = now;
+    frames = 0;
+  }
+}
+
+function toggleFreeLook(enable){
+  freeLook = enable;
+  freeLookIndicator.innerText = 'Free Look: ' + (freeLook ? 'ON' : 'OFF') + ' (F)';
+  // when disabling free look, smoothly align camera rotation to playerYaw
+  if (!freeLook) {
+    const startYaw = camera.rotation.y;
+    const endYaw = playerYaw;
+    const start = performance.now();
+    const dur = 240;
+    const anim = () => {
+      const now = performance.now();
+      const t = Math.min(1, (now - start)/dur);
+      camera.rotation.y = startYaw + (endYaw - startYaw) * t;
+      if (t < 1) requestAnimationFrame(anim);
+    };
+    anim();
+  }
+}
+</script>
+</body>
+</html>
