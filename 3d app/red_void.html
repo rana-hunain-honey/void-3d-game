@@ -141,14 +141,19 @@ function init(){
   // Check if running on mobile
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   
-  // Configure renderer with mobile-specific settings
+  // Configure renderer with better settings for compatibility
   renderer = new THREE.WebGLRenderer({ 
     antialias: !isMobile,
     alpha: false,
-    powerPreference: "high-performance",
+    powerPreference: "default",
     stencil: false,
-    depth: true
+    depth: true,
+    preserveDrawingBuffer: true
   });
+  
+  // Force renderer context attributes for better compatibility
+  renderer.getContext().getContextAttributes().premultipliedAlpha = true;
+  renderer.getContext().getContextAttributes().preserveDrawingBuffer = true;
   
   // Ensure renderer is properly configured
   renderer.setClearColor(0x000000, 1);
@@ -284,12 +289,24 @@ function init(){
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.repeat.set(1,1);
 
-  const gridMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  const gridMat = new THREE.MeshBasicMaterial({ 
+    map: tex, 
+    transparent: true, 
+    blending: THREE.AdditiveBlending, 
+    depthWrite: false, 
+    depthTest: true,
+    side: THREE.DoubleSide,
+    opacity: 0.8
+  });
   gridPlane = new THREE.Mesh(new THREE.PlaneGeometry(GRID_WORLD_SIZE, GRID_WORLD_SIZE), gridMat);
   gridPlane.rotation.x = -Math.PI/2;
   gridPlane.position.y = -1.19; // slightly above ground to avoid z-fighting
   gridPlane.renderOrder = 1;
+  gridPlane.visible = true; // Ensure grid is visible
   scene.add(gridPlane);
+  
+  // Force material update
+  gridMat.needsUpdate = true;
   window._redVoidGridPlane = gridPlane; // expose for debugging
   })();
 
@@ -471,18 +488,20 @@ function restartSpawningWithSettings(){
 }
 
 function spawnEnemy(){
-  // spawn on a random point on a sphere at WORLD_RADIUS
+  // Improved enemy spawning with better positioning
   const dir = new THREE.Vector3(
     (Math.random()*2-1),
-    (Math.random()*2-1) * 0.6, // favor horizontal plane a bit
+    (Math.random()*2-1) * 0.3, // Reduce vertical variance
     (Math.random()*2-1)
   ).normalize();
 
-  const pos = dir.clone().multiplyScalar(WORLD_RADIUS + Math.random()*4);
-  // create a simple 3D enemy box instead of a flat banner
-  const boxW = 0.9 + Math.random()*0.6;
-  const boxH = 1.2 + Math.random()*0.8;
-  const boxD = 0.4 + Math.random()*0.4;
+  // Ensure enemies spawn at a consistent radius
+  const pos = dir.clone().multiplyScalar(WORLD_RADIUS);
+  
+  // Make enemies more visible with larger size
+  const boxW = 1.2 + Math.random()*0.6;
+  const boxH = 1.5 + Math.random()*0.8;
+  const boxD = 0.6 + Math.random()*0.4;
   // try to reuse from pool
   let meshObj = null;
   if (enemyPool.length) {
@@ -703,15 +722,19 @@ function shootFireball(){
     m.castShadow = true;
     fb = { mesh: m };
   }
-  const start = playerMesh.position.clone().add(aimVector.clone().multiplyScalar(PLAYER_RADIUS + 0.6));
+  // Ensure proper fireball positioning and velocity
+  const start = playerMesh.position.clone().add(new THREE.Vector3(0, 0, 0));
+  start.add(aimVector.clone().multiplyScalar(PLAYER_RADIUS + 0.6));
   fb.mesh.position.copy(start);
   scene.add(fb.mesh);
-  const velocity = aimVector.clone().multiplyScalar(FIREBALL_SPEED);
+  
+  // Ensure proper velocity calculation
+  const velocity = aimVector.clone().normalize().multiplyScalar(FIREBALL_SPEED);
   fireballs.push({ mesh: fb.mesh, velocity, born: performance.now() });
 
-  // small flash
-  flash(0.35, 15);
-  playBlip(880, 0.06, 0.04);
+  // Enhance visual feedback
+  flash(0.5, 20);
+  playBlip(880, 0.06, 0.08);
 }
 
 /* ==== Flash helper (fade quickly) ==== */
@@ -852,12 +875,16 @@ function updateScore(){
 /* ==== Player movement and camera ==== */
 let velocity = new THREE.Vector3(0,0,0);
 function handlePlayerMovement(dt){
-  // directions relative to camera yaw (ignore camera pitch)
-  // when freeLook is active we keep player's facing in playerYaw
+  // Enhanced movement handling
   const yaw = freeLook ? playerYaw : camera.rotation.y;
+  
+  // Calculate movement vectors relative to camera
   const forward = new THREE.Vector3(0,0,-1).applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0))).normalize();
   const right = new THREE.Vector3(1,0,0).applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0))).normalize();
   let move = new THREE.Vector3();
+  
+  // Store previous position for collision detection
+  const previousPosition = playerMesh.position.clone();
   
   // Handle both keyboard and touch joystick input
   if (keys['KeyW'] || keys['ArrowUp'] || (joystickOffset && joystickOffset.y < -0.1)) move.add(forward);
