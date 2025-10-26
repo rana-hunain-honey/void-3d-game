@@ -21,6 +21,29 @@
   }
   canvas { display:block; }
   #fps { position: absolute; top:12px; right:12px; color:#aaa; font-size:12px; }
+  #joystick {
+    position: absolute;
+    left: 40px;
+    bottom: 40px;
+    width: 120px;
+    height: 120px;
+    background: rgba(255,255,255,0.1);
+    border: 2px solid rgba(255,255,255,0.2);
+    border-radius: 60px;
+    touch-action: none;
+    display: none;
+  }
+  #joystick-knob {
+    position: absolute;
+    width: 50px;
+    height: 50px;
+    background: rgba(255,40,40,0.3);
+    border: 2px solid rgba(255,40,40,0.4);
+    border-radius: 25px;
+    top: 35px;
+    left: 35px;
+    touch-action: none;
+  }
 </style>
 </head>
 <body>
@@ -34,6 +57,7 @@
   WASD / Arrow Keys: move &nbsp; • &nbsp; Mouse: look around (360° free look) &nbsp; • &nbsp; Left Click: shoot &nbsp; • &nbsp; ESC: exit pointer lock
 </div>
 <div id="fps"></div>
+<div id="joystick"><div id="joystick-knob"></div></div>
 
 <!-- three.js from CDN -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
@@ -309,9 +333,53 @@ function init(){
   document.body.appendChild(fireBtn);
   fireBtn.addEventListener('pointerdown', (e)=>{ e.preventDefault(); shootFireball(); });
 
-  // show touch button on touch devices
+  // Mobile controls setup
   if ('ontouchstart' in window) {
     fireBtn.style.display = 'block';
+    document.getElementById('joystick').style.display = 'block';
+    
+    // Joystick variables
+    const joystick = document.getElementById('joystick');
+    const knob = document.getElementById('joystick-knob');
+    let joystickActive = false;
+    let joystickOffset = { x: 0, y: 0 };
+    const maxOffset = 35;  // Maximum joystick movement
+
+    // Touch handling for joystick
+    joystick.addEventListener('touchstart', handleJoystickStart);
+    joystick.addEventListener('touchmove', handleJoystickMove);
+    joystick.addEventListener('touchend', handleJoystickEnd);
+
+    function handleJoystickStart(e) {
+      e.preventDefault();
+      const touch = e.touches[0];
+      const rect = joystick.getBoundingClientRect();
+      joystickActive = true;
+      updateJoystickPosition(touch.clientX - rect.left - rect.width/2, touch.clientY - rect.top - rect.height/2);
+    }
+
+    function handleJoystickMove(e) {
+      if (!joystickActive) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      const rect = joystick.getBoundingClientRect();
+      updateJoystickPosition(touch.clientX - rect.left - rect.width/2, touch.clientY - rect.top - rect.height/2);
+    }
+
+    function handleJoystickEnd(e) {
+      joystickActive = false;
+      joystickOffset = { x: 0, y: 0 };
+      knob.style.transform = `translate(0px, 0px)`;
+    }
+
+    function updateJoystickPosition(x, y) {
+      const distance = Math.sqrt(x * x + y * y);
+      const angle = Math.atan2(y, x);
+      const clampedDistance = Math.min(distance, maxOffset);
+      joystickOffset.x = (Math.cos(angle) * clampedDistance) / maxOffset;
+      joystickOffset.y = (Math.sin(angle) * clampedDistance) / maxOffset;
+      knob.style.transform = `translate(${joystickOffset.x * maxOffset}px, ${joystickOffset.y * maxOffset}px)`;
+    }
   }
 
   clock = new THREE.Clock();
@@ -754,10 +822,12 @@ function handlePlayerMovement(dt){
   const forward = new THREE.Vector3(0,0,-1).applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0))).normalize();
   const right = new THREE.Vector3(1,0,0).applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0))).normalize();
   let move = new THREE.Vector3();
-  if (keys['KeyW'] || keys['ArrowUp']) move.add(forward);
-  if (keys['KeyS'] || keys['ArrowDown']) move.sub(forward);
-  if (keys['KeyA'] || keys['ArrowLeft']) move.sub(right);
-  if (keys['KeyD'] || keys['ArrowRight']) move.add(right);
+  
+  // Handle both keyboard and touch joystick input
+  if (keys['KeyW'] || keys['ArrowUp'] || (joystickOffset && joystickOffset.y < -0.1)) move.add(forward);
+  if (keys['KeyS'] || keys['ArrowDown'] || (joystickOffset && joystickOffset.y > 0.1)) move.sub(forward);
+  if (keys['KeyA'] || keys['ArrowLeft'] || (joystickOffset && joystickOffset.x < -0.1)) move.sub(right);
+  if (keys['KeyD'] || keys['ArrowRight'] || (joystickOffset && joystickOffset.x > 0.1)) move.add(right);
   if (move.length() > 0) move.normalize();
   // Apply movement to player mesh (camera follows since it's parented)
   playerMesh.position.addScaledVector(move, PLAYER_SPEED * dt);
