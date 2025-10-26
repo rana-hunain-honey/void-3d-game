@@ -401,7 +401,7 @@ function spawnEnemy(){
     meshObj = { mesh: m, box: new THREE.Box3() };
   }
   // configure size for pooled or new mesh
-  meshObj.mesh.geometry.dispose && meshObj.mesh.geometry.parameters === undefined && meshObj.mesh.geometry.dispose();
+  if (meshObj && meshObj.mesh && meshObj.mesh.geometry && typeof meshObj.mesh.geometry.dispose === 'function') meshObj.mesh.geometry.dispose();
   meshObj.mesh.scale.set(1,1,1);
   meshObj.mesh.position.copy(pos);
   meshObj.mesh.lookAt(0,0,0);
@@ -444,7 +444,7 @@ function spawnParticles(pos, color=0xff4444){
       } else {
         scene.remove(p);
         if (particlePool.length < 200) particlePool.push(p);
-        else { if (p.geometry) p.geometry.dispose(); if (p.material) p.material.dispose(); }
+  else { if (p.geometry && typeof p.geometry.dispose === 'function') p.geometry.dispose(); if (p.material && typeof p.material.dispose === 'function') p.material.dispose(); }
       }
     };
     anim();
@@ -559,20 +559,26 @@ function trimPools(){
   const reserveEnemies = 40;
   while (enemyPool.length > reserveEnemies) {
     const e = enemyPool.pop();
-    if (e.mesh.geometry) e.mesh.geometry.dispose();
-    if (e.mesh.material) e.mesh.material.dispose();
+    if (e && e.mesh) {
+      if (e.mesh.geometry && typeof e.mesh.geometry.dispose === 'function') e.mesh.geometry.dispose();
+      if (e.mesh.material && typeof e.mesh.material.dispose === 'function') e.mesh.material.dispose();
+    }
   }
   const reserveFire = 20;
   while (fireballPool.length > reserveFire) {
     const f = fireballPool.pop();
-    if (f.mesh.geometry) f.mesh.geometry.dispose();
-    if (f.mesh.material) f.mesh.material.dispose();
+    if (f && f.mesh) {
+      if (f.mesh.geometry && typeof f.mesh.geometry.dispose === 'function') f.mesh.geometry.dispose();
+      if (f.mesh.material && typeof f.mesh.material.dispose === 'function') f.mesh.material.dispose();
+    }
   }
   const reserveParticles = 40;
   while (particlePool.length > reserveParticles) {
     const p = particlePool.pop();
-    if (p.geometry) p.geometry.dispose();
-    if (p.material) p.material.dispose();
+    if (p) {
+      if (p.geometry && typeof p.geometry.dispose === 'function') p.geometry.dispose();
+      if (p.material && typeof p.material.dispose === 'function') p.material.dispose();
+    }
   }
   // hint garbage collection by toggling a tiny flash
   flash(0.3, 8);
@@ -649,8 +655,8 @@ function animate(){
         f.mesh.visible = false;
       } else {
         // fully dispose geometry/material to free GPU
-        if (f.mesh.geometry) f.mesh.geometry.dispose();
-        if (f.mesh.material) f.mesh.material.dispose();
+        if (f.mesh && f.mesh.geometry && typeof f.mesh.geometry.dispose === 'function') f.mesh.geometry.dispose();
+        if (f.mesh && f.mesh.material && typeof f.mesh.material.dispose === 'function') f.mesh.material.dispose();
       }
       fireballs.splice(i,1);
     }
@@ -697,7 +703,7 @@ function animate(){
               // after pop, return to pool
               scene.remove(e.mesh);
               if (enemyPool.length < POOL_MAX) { enemyPool.push({ mesh: e.mesh, box: e.box }); e.mesh.visible = false; }
-              else { if (e.mesh.geometry) e.mesh.geometry.dispose(); if (e.mesh.material) e.mesh.material.dispose(); }
+              else { if (e.mesh && e.mesh.geometry && typeof e.mesh.geometry.dispose === 'function') e.mesh.geometry.dispose(); if (e.mesh && e.mesh.material && typeof e.mesh.material.dispose === 'function') e.mesh.material.dispose(); }
               // spawn particles and sound
               spawnParticles(e.mesh.position, 0xff4444);
               playBlip(540, 0.08, 0.08);
@@ -706,7 +712,7 @@ function animate(){
           popAnim();
           // return fireball to pool immediately
           if (fireballPool.length < POOL_MAX) { fireballPool.push({ mesh: f.mesh }); f.mesh.visible = false; }
-          else { if (f.mesh.geometry) f.mesh.geometry.dispose(); if (f.mesh.material) f.mesh.material.dispose(); }
+          else { if (f.mesh && f.mesh.geometry && typeof f.mesh.geometry.dispose === 'function') f.mesh.geometry.dispose(); if (f.mesh && f.mesh.material && typeof f.mesh.material.dispose === 'function') f.mesh.material.dispose(); }
           enemies.splice(i,1);
           fireballs.splice(j,1);
         // particle-like brief scale pop
@@ -791,12 +797,12 @@ function restartGame(){
   enemies.forEach(e => {
     scene.remove(e.mesh);
     if (enemyPool.length < POOL_MAX) { enemyPool.push({ mesh: e.mesh, box: e.box }); e.mesh.visible = false; }
-    else { if (e.mesh.geometry) e.mesh.geometry.dispose(); if (e.mesh.material) e.mesh.material.dispose(); }
+    else { if (e.mesh && e.mesh.geometry && typeof e.mesh.geometry.dispose === 'function') e.mesh.geometry.dispose(); if (e.mesh && e.mesh.material && typeof e.mesh.material.dispose === 'function') e.mesh.material.dispose(); }
   });
   fireballs.forEach(f => {
     scene.remove(f.mesh);
     if (fireballPool.length < POOL_MAX) { fireballPool.push({ mesh: f.mesh }); f.mesh.visible = false; }
-    else { if (f.mesh.geometry) f.mesh.geometry.dispose(); if (f.mesh.material) f.mesh.material.dispose(); }
+    else { if (f.mesh && f.mesh.geometry && typeof f.mesh.geometry.dispose === 'function') f.mesh.geometry.dispose(); if (f.mesh && f.mesh.material && typeof f.mesh.material.dispose === 'function') f.mesh.material.dispose(); }
   });
   enemies = [];
   fireballs = [];

@@ -34,7 +34,8 @@ default_settings = {
 }
 if os.path.exists(SETTINGS_FILE):
     try:
-        settings = json.load(open(SETTINGS_FILE))
+        with open(SETTINGS_FILE, 'r') as f:
+            settings = json.load(f)
     except Exception:
         settings = default_settings.copy()
 else:
@@ -45,6 +46,8 @@ app = Ursina()
 window.title = 'Red Void — Ursina Prototype'
 window.borderless = False
 window.fullscreen = False
+window.windowed_size = (800, 600)
+window.position = (100, 100)
 window.color = color.black
 
 # camera
@@ -212,17 +215,28 @@ def spawn_enemy():
 
 # shoot
 def shoot():
-    # spawn from camera (screen center) so shots come from the player's view
-    if fireball_pool:
-        f = fireball_pool.pop()
-        f.position = camera.world_position + camera.forward * 0.6
-        f.enabled = True
-    else:
-        f = Entity(model='sphere', color=color.rgb(255,102,102), scale=0.18, position=camera.world_position + camera.forward * 0.6)
-    # velocity in forward direction of camera
-    forward = camera.forward
-    vel = forward * FIREBALL_SPEED
-    fireballs.append({'ent': f, 'vel': vel, 'born': time.time()})
+    # Calculate number of fireballs based on kill count
+    num_fireballs = 1 + (score // 10)  # Add an extra fireball every 10 kills
+    
+    # Spawn multiple fireballs in a spread pattern
+    for i in range(num_fireballs):
+        # spawn from camera (screen center) so shots come from the player's view
+        if fireball_pool:
+            f = fireball_pool.pop()
+            f.position = camera.world_position + camera.forward * 0.6
+            f.enabled = True
+        else:
+            f = Entity(model='sphere', color=color.rgb(255,102,102), scale=0.18, position=camera.world_position + camera.forward * 0.6)
+        
+        # Add slight spread for multiple fireballs
+        spread = (i - (num_fireballs-1)/2) * 5  # 5 degrees spread between fireballs
+        forward = Vec3(*camera.forward)  # Create a new Vec3 with the same values
+        if spread != 0:
+            forward = forward.rotate((0, spread, 0))
+        
+        vel = forward * FIREBALL_SPEED
+        fireballs.append({'ent': f, 'vel': vel, 'born': time.time()})
+    
     # sound placeholder
     if settings.get('sound', True):
         if shot_snd:
@@ -243,18 +257,7 @@ def flash(intensity):
     flash_light.scale = intensity * 0.3
     invoke(lambda: setattr(flash_light, 'enabled', False), delay=0.06)
 
-# input
-def input(key):
-    if key == 'space' or key == 'left mouse down':
-        shoot()
-    if key == 'p':
-        prefill_pools()
-    if key == 't':
-        trim_pools()
-    if key == 'f':
-        global free_look
-        free_look = not free_look
-        free_look_indicator.text = 'Free Look: ' + ('ON' if free_look else 'OFF') + ' (F)'
+# (input handler consolidated later in the file)
 
 # UI buttons
 Button(text='Pre-warm Pools (P)', color=color.black, scale=(0.12,0.05), position=window.top_right + (-0.12, -0.06), on_click=lambda: prefill_pools())
@@ -321,29 +324,19 @@ def update():
             else:
                 destroy(fb['ent'])
 
-    # update enemies: steer toward the player's current position
+    # update enemies: move directly toward the player
     for en in list(enemies):
         ent = en['ent']
         # vector to player
         to_player = (player.position - ent.position)
         if to_player.length_squared() > 0.0001:
-            desired_dir = to_player.normalized()
-            # initialize forward if missing
-            if 'forward' not in en:
-                en['forward'] = Vec3(0,0,1)
-            cur_fwd = en['forward']
-            # clamp dot product for numeric safety
-            dot = clamp(cur_fwd.dot(desired_dir), -1.0, 1.0)
-            angle = math.degrees(math.acos(dot))
-            max_turn = ENEMY_TURN_RATE * dt
-            if angle > 0.001:
-                t = min(1.0, max_turn / max(1e-6, angle))
-                new_fwd = lerp(cur_fwd, desired_dir, t).normalized()
-                en['forward'] = new_fwd
-            else:
-                new_fwd = cur_fwd
-            vel = new_fwd * en.get('speed', ENEMY_SPEED)
+            # Move directly toward player
+            direction = to_player.normalized()
+            vel = direction * en.get('speed', ENEMY_SPEED)
             ent.position += vel * dt
+            # Make enemy face the player
+            ent.look_at(player.position)
+            ent.rotation_x = 0  # Keep enemy upright
         # simple collision distance
         if distance(ent.position, player.position) < 1.0:
             # end game: show message
@@ -434,7 +427,11 @@ def update():
     save_timer += dt
     if save_timer > 3.0:
         save_timer = 0
-        json.dump(settings, open(SETTINGS_FILE, 'w'))
+        try:
+            with open(SETTINGS_FILE, 'w') as f:
+                json.dump(settings, f)
+        except Exception:
+            pass
 
     # update particles with simple physics
     for p in list(particles_active):
