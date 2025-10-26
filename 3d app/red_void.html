@@ -137,13 +137,49 @@ function init(){
   // scene + renderer
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000000);
-  // Enhanced fog for atmospheric depth
-  scene.fog = new THREE.FogExp2(0x000000, 0.015);
-  renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  
+  // Check if running on mobile
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  
+  // Configure renderer with mobile-specific settings
+  renderer = new THREE.WebGLRenderer({ 
+    antialias: !isMobile,
+    alpha: false,
+    powerPreference: "high-performance",
+    stencil: false,
+    depth: true
+  });
+  
+  // Ensure renderer is properly configured
+  renderer.setClearColor(0x000000, 1);
+  renderer.setPixelRatio(window.devicePixelRatio);
+  
+  // Basic fog for performance
+  scene.fog = new THREE.Fog(0x000000, 1, 50);
+  
+  // Mobile-specific optimizations
+  if (isMobile) {
+    renderer.setPixelRatio(1); // force lower resolution for better performance
+    renderer.shadowMap.enabled = false;
+    
+    // Reduce visual effects on mobile
+    settings.particles = false;
+    settings.shadows = false;
+    
+    // Adjust camera for mobile
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 40);
+  } else {
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    camera = new THREE.PerspectiveCamera(90, window.innerWidth/window.innerHeight, 0.1, 1000);
+  }
+  
   renderer.setSize(window.innerWidth, window.innerHeight);
   document.body.appendChild(renderer.domElement);
+  
+  // Force a complete renderer reset
+  renderer.dispose();
+  renderer.info.reset();
 
   // camera (first-person view at player eye level)
   camera = new THREE.PerspectiveCamera(90, window.innerWidth/window.innerHeight, 0.1, 1000);
@@ -891,9 +927,21 @@ function restartGame(){
 
 /* ==== Utilities ==== */
 function onResize(){
-  camera.aspect = window.innerWidth / window.innerHeight;
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  
+  camera.aspect = width / height;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  
+  // On mobile, use a lower resolution for better performance
+  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+    const scale = 0.75; // Render at 75% resolution on mobile
+    renderer.setSize(width * scale, height * scale);
+    renderer.domElement.style.width = width + 'px';
+    renderer.domElement.style.height = height + 'px';
+  } else {
+    renderer.setSize(width, height);
+  }
 }
 
 // updateFPS: update onscreen FPS and apply a conservative adaptive spawn throttle
